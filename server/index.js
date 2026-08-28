@@ -162,6 +162,12 @@ app.use((req, res, next) => {
 
 app.options('*', (_req, res) => res.sendStatus(204))
 
+// [claude-sync] Sirve la build estatica (dist/) desde el mismo origen que la API.
+{
+  const dist = join(__dirname, '..', 'dist')
+  if (existsSync(dist)) app.use(express.static(dist))
+}
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', agents: activeAgents.size, clients: wss?.clients.size ?? 0 })
