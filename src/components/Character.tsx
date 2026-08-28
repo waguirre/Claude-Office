@@ -47,7 +47,9 @@ function getAnimState(state: AgentState): string {
     case 'walking-to-manager':
     case 'walking-to-desk':     return 'walking'
     case 'talking-to-manager':  return 'talking'
-    case 'coffee-break':        return 'coffee'
+    case 'coffee-break':
+    case 'wrapping-up':         return 'coffee'
+    case 'leaving':             return 'leaving'
     case 'new-hire':            return 'new-hire'
     default:                    return 'idle'
   }
@@ -72,7 +74,8 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
   const [turnedAround, setTurnedAround] = useState(false)
 
   const isMoving = agent.state === 'new-hire' || agent.state === 'walking-to-desk' ||
-    agent.state === 'coffee-break' || agent.state === 'completed' || agent.state === 'changing-room'
+    agent.state === 'coffee-break' || agent.state === 'completed' || agent.state === 'changing-room' ||
+    agent.state === 'wrapping-up' || agent.state === 'leaving'
 
   // Calculate movement direction when walking
   const dx = agent.position.x - prevPosRef.current.x
@@ -133,7 +136,7 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
 
   return (
     <div
-      className={`character-wrapper state-${animState}`}
+      className={`character-wrapper state-${animState}${agent.fading ? ' leaving-fade' : ''}`}
       style={{
         left: `${agent.position.x}%`,
         top: `${agent.position.y}%`,

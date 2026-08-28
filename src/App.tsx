@@ -4,6 +4,7 @@ import './styles/rooms.css'
 import SlackChat, { ChatMessage } from './components/SlackChat'
 import Character from './components/Character'
 import FurnitureRenderer from './components/FurnitureRenderer'
+import KanbanBoard from './components/KanbanBoard'
 import { Agent, OfficeEvent, AGENT_CONFIGS } from './types'
 import { getCurrentPhase, getPhaseLabel, type DayPhase } from './daylight'
 import { ROOMS } from './rooms'
@@ -18,13 +19,14 @@ import {
   BREAK_MIN_DESK_TIME,
   BREAK_CHANCE_PER_SEC,
   BREAK_DURATION,
+  nextLifecyclePhase,
   spawnMessage,
   workMessage,
   doneMessage,
   coffeeMessage,
   waterMessage,
 } from './agentManager'
-import { BOSS_ROLE, BOSS_NAME } from './config'
+import { BOSS_ROLE, BOSS_NAME, CAFETERIA_MS, LEAVE_FADE_MS } from './config'
 import { pickEvent } from './events'
 import { getInteraction } from './interactions'
 import {
@@ -60,6 +62,8 @@ function makeMsgId() { return nextMsgId++ }
 const MAIN_ROOM = ROOMS['main-office']
 const ENTRY = MAIN_ROOM.entryPoint           // door position (%)
 const COFFEE_SPOT = MAIN_ROOM.agentSpots.find(s => s.type === 'coffee') ?? null
+// El tablero se dibuja sobre su hotspot; si alguien lo mueve en rooms.ts, se mueve solo.
+const BOARD_SPOT = MAIN_ROOM.furniture.find(f => f.id === 'kanban-board') ?? null
 const WATER_SPOTS  = MAIN_ROOM.agentSpots.filter(s => s.type === 'water')
 
 // Agent that is walking toward door to leave has this as targetPosition
@@ -175,6 +179,10 @@ interface AgentMeta {
   onBreak: boolean
   /** When the break started */
   breakStartedAt: number | null
+  /** Cuando llego a la cafetera tras terminar la tarea */
+  wrappingSince: number | null
+  /** Cuando llego a la puerta y arranco el fundido de salida */
+  leftAt: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -284,9 +292,10 @@ const App: React.FC = () => {
   // All hooks must be at the top — before any conditional returns.
   const theme = useTheme() // Why: re-render rooms + agents when /the-office toggles
   const [agents, setAgents] = useState<Agent[]>(() => [createBoss(), createClaude()])
+  const [boardOpen, setBoardOpen] = useState(false)
   const agentMetaRef = useRef<Map<string, AgentMeta>>(new Map([
-    [BOSS_ID, { spawnedAt: Date.now(), arrivedAtDeskAt: Date.now(), idleSince: null, onBreak: false, breakStartedAt: null }],
-    [CLAUDE_ID, { spawnedAt: Date.now(), arrivedAtDeskAt: Date.now(), idleSince: null, onBreak: false, breakStartedAt: null }],
+    [BOSS_ID, { spawnedAt: Date.now(), arrivedAtDeskAt: Date.now(), idleSince: null, onBreak: false, breakStartedAt: null, wrappingSince: null, leftAt: null }],
+    [CLAUDE_ID, { spawnedAt: Date.now(), arrivedAtDeskAt: Date.now(), idleSince: null, onBreak: false, breakStartedAt: null, wrappingSince: null, leftAt: null }],
   ]))
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -611,6 +620,8 @@ const App: React.FC = () => {
             idleSince: null,
             onBreak: false,
             breakStartedAt: null,
+            wrappingSince: null,
+            leftAt: null,
           })
 
           const cfg = AGENT_CONFIGS[role] ?? AGENT_CONFIGS['default']
@@ -635,6 +646,26 @@ const App: React.FC = () => {
               effects.push({
                 msg: { sender: a.name, role: a.role, color: cfg.color, text: `⚡ ${statusMsg}` },
               })
+              // Llego trabajo mientras estaba en la cafetera o camino a la puerta:
+              // no puede ponerse a "trabajar" de pie junto a la cafetera, tiene
+              // que volver a su puesto primero.
+              if (a.state === 'wrapping-up' || a.state === 'leaving') {
+                const backMeta = agentMetaRef.current.get(a.id)
+                if (backMeta) {
+                  backMeta.wrappingSince = null
+                  backMeta.leftAt = null
+                  backMeta.arrivedAtDeskAt = null
+                }
+                effects.push({ furnitureState: { id: 'coffee', state: 'off' } })
+                return {
+                  ...a,
+                  state: 'walking-to-desk' as const,
+                  fading: false,
+                  targetPosition: { ...a.deskPosition },
+                  statusText: statusMsg,
+                  pathQueue: computePath(a.position, a.deskPosition),
+                }
+              }
               return { ...a, state: 'working' as const, statusText: statusMsg }
             })
           }
@@ -703,23 +734,28 @@ const App: React.FC = () => {
               msg: { sender: bossCfg.title, role: BOSS_ROLE, color: bossCfg.color, text: reply },
             })
 
-            // Mark as completed and start walking to door
+            // Termino: se va a la cafetera, no a la puerta. Solo sale de la
+            // oficina si pasan CAFETERIA_MS sin trabajo nuevo (ver el tick).
             const meta = agentMetaRef.current.get(a.id)
             if (meta) {
               meta.arrivedAtDeskAt = null
               meta.onBreak = false
+              meta.wrappingSince = null   // se marca al llegar a la cafetera
+              meta.leftAt = null
             }
             // Close filing cabinet if this agent was using it
             if (a.assignedSpotId === 'spot-filing') {
               effects.push({ furnitureState: { id: 'filing-1', state: 'closed' } })
             }
 
+            // Sin coffee spot en el mapa no hay cafetera: se va derecho, como antes.
+            const wrapTarget = COFFEE_SPOT ? { x: COFFEE_SPOT.x, y: COFFEE_SPOT.y } : { ...DOOR_TARGET }
             return {
               ...a,
-              state: 'completed' as const,
-              targetPosition: { ...DOOR_TARGET },
+              state: COFFEE_SPOT ? ('wrapping-up' as const) : ('leaving' as const),
+              targetPosition: wrapTarget,
               statusText: event.result ?? doneMessage(),
-              pathQueue: computePath(a.position, DOOR_TARGET),
+              pathQueue: computePath(a.position, wrapTarget),
             }
           })
         }
@@ -1349,6 +1385,8 @@ const App: React.FC = () => {
           idleSince: null,
           onBreak: false,
           breakStartedAt: null,
+            wrappingSince: null,
+            leftAt: null,
         }
         agentMetaRef.current.set(agent.id, meta)
 
@@ -1411,6 +1449,23 @@ const App: React.FC = () => {
             } else if (agent.state === 'completed' && isAtDoor) {
               updated = { ...agent, position }
               changed = true
+            } else if (agent.state === 'wrapping-up') {
+              // Llego a la cafetera: arranca la cuenta atras de CAFETERIA_MS.
+              if (meta.wrappingSince === null) {
+                meta.wrappingSince = nowMs
+                setFurnitureStates(prev => ({ ...prev, coffee: 'on' }))
+              }
+              updated = { ...agent, position }
+              changed = true
+            } else if (agent.state === 'leaving' && isAtDoor) {
+              // Llego a la puerta: arranca el fundido; el borrado lo hace el prune.
+              if (meta.leftAt === null) {
+                meta.leftAt = nowMs
+                updated = { ...agent, position, fading: true }
+              } else {
+                updated = { ...agent, position }
+              }
+              changed = true
             } else if (agent.state === 'coffee-break') {
               if (!meta.onBreak) {
                 meta.onBreak = true
@@ -1470,6 +1525,29 @@ const App: React.FC = () => {
           }
         }
 
+        // Ciclo post-tarea: se cumplio la espera en la cafetera -> a la puerta.
+        if (updated.state === 'wrapping-up') {
+          const phase = nextLifecyclePhase({
+            state: updated.state,
+            wrappingSince: meta.wrappingSince,
+            leftAt: meta.leftAt,
+            now: nowMs,
+            cafeteriaMs: CAFETERIA_MS,
+            fadeMs: LEAVE_FADE_MS,
+          })
+          if (phase === 'leave') {
+            meta.wrappingSince = null
+            setFurnitureStates(prev => ({ ...prev, coffee: 'off' }))
+            updated = {
+              ...updated,
+              state: 'leaving',
+              targetPosition: { ...DOOR_TARGET },
+              pathQueue: computePath(updated.position, DOOR_TARGET),
+            }
+            changed = true
+          }
+        }
+
         // Random break trigger
         if (
           updated.state === 'working' &&
@@ -1512,9 +1590,26 @@ const App: React.FC = () => {
         return updated
       })
 
-      // Prune completed agents at the door (never prune the boss)
+      // Borrado en la puerta (nunca al jefe). A diferencia de antes, el agente
+      // no desaparece al tocar la puerta: se le deja terminar el fundido.
       const pruned = next.filter(a => {
         if (a.id === BOSS_ID || a.id === CLAUDE_ID) return true
+        const meta = agentMetaRef.current.get(a.id)
+        if (
+          meta &&
+          nextLifecyclePhase({
+            state: a.state,
+            wrappingSince: meta.wrappingSince,
+            leftAt: meta.leftAt,
+            now: nowMs,
+            cafeteriaMs: CAFETERIA_MS,
+            fadeMs: LEAVE_FADE_MS,
+          }) === 'despawn'
+        ) {
+          agentMetaRef.current.delete(a.id)
+          return false
+        }
+        // Estado heredado: los que aun anden en 'completed' salen como antes.
         if (a.state === 'completed') {
           const atDoor = (
             Math.abs(a.position.x - DOOR_TARGET.x) < ARRIVAL_THRESHOLD * 2 &&
@@ -1806,6 +1901,18 @@ const App: React.FC = () => {
               opacity: dayNightMode === 'auto' ? nightOpacity : dayNightMode === 'night' ? 1 : 0,
             }}
           />
+
+          {/* Tablero: post-its sobre el hotspot + panel legible al hacer click */}
+          {BOARD_SPOT && (
+            <KanbanBoard
+              agents={agents.filter(a => a.id !== BOSS_ID)}
+              x={BOARD_SPOT.x}
+              y={BOARD_SPOT.y}
+              open={boardOpen}
+              onToggle={() => setBoardOpen(o => !o)}
+              onClose={() => setBoardOpen(false)}
+            />
+          )}
 
           {/* Furniture — apply interactive state overrides */}
           <FurnitureRenderer onItemClick={handleFurnitureClick} items={MAIN_ROOM.furniture.map(item => {

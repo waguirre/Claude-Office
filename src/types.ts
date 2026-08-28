@@ -7,6 +7,8 @@ export type AgentState =
   | 'walking-to-desk'
   | 'working'
   | 'coffee-break'
+  | 'wrapping-up'   // termino la tarea: esta en la cafetera esperando mas trabajo
+  | 'leaving'       // sin trabajo pendiente: camina a la puerta y se desvanece
   | 'completed'
   | 'new-hire'
   | 'changing-room'
@@ -35,6 +37,7 @@ export interface Agent {
   emoji: string
   hiredAt: number
   pathQueue?: { x: number; y: number }[]  // waypoints to walk through
+  fading?: boolean          // en la puerta, corriendo el fundido de salida
 }
 
 export interface OfficeEvent {

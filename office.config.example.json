@@ -4,5 +4,8 @@
     "sprite": "Me-1",
     "color": "#ff4444",
     "emoji": "crown"
+  },
+  "office": {
+    "cafeteriaMs": 45000
   }
 }

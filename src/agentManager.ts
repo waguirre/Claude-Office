@@ -8,7 +8,9 @@
  *   2. agent_working  → working state at desk (show typing effect)
  *   3. Randomly:        coffee-break → walk to coffee spot, wait, walk back
  *   4. Randomly:        water-break  → walk to water spot, wait, walk back
- *   5. agent_completed → walk to door → agent removed
+ *   5. agent_completed → wrapping-up: walk to the coffee spot and wait there
+ *   6. new work within CAFETERIA_MS → back to the desk; otherwise leaving →
+ *      walk to door → fade out → agent removed
  *
  * Movement:
  *   Positions are percentages (0-100) matching room container dimensions.
@@ -272,6 +274,11 @@ export function getEffect(
       if (walkText.includes('standup')) return null
       return null
     }
+    case 'wrapping-up':
+      // Termino y esta en la cafetera: taza de cafe, igual que una pausa normal.
+      return '/sprites/effects/need-coffee.png'
+    case 'leaving':
+      return '/sprites/effects/thumb-up.png'
     case 'new-hire':
       return '/sprites/effects/star.png'
     case 'completed':
@@ -358,6 +365,10 @@ export const BREAK_CHANCE_PER_SEC = 0.008
 export const BREAK_DURATION = 8_000
 /** Walking speed in %-units per frame at 60fps */
 export const WALK_SPEED = 0.08
+
+// El ciclo de vida post-tarea vive en lifecycle.ts (logica pura, con test).
+export { nextLifecyclePhase } from './lifecycle'
+export type { LifecyclePhase } from './lifecycle'
 
 // ---------------------------------------------------------------------------
 // Agent creation helper

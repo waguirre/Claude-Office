@@ -6,7 +6,10 @@
  */
 
 // Load user config (office.config.json) — bundled by Vite
-let userConfig: { boss?: { name?: string; sprite?: string; color?: string; emoji?: string } } = {}
+let userConfig: {
+  boss?: { name?: string; sprite?: string; color?: string; emoji?: string }
+  office?: { cafeteriaMs?: number }
+} = {}
 try {
   // Vite handles JSON imports at build time
   userConfig = await import('../office.config.json')
@@ -18,6 +21,15 @@ const bossName   = userConfig.boss?.name   ?? 'Boss'
 const bossSprite = userConfig.boss?.sprite ?? 'Me-1'
 const bossColor  = userConfig.boss?.color  ?? '#ff4444'
 const bossEmoji  = userConfig.boss?.emoji  ?? '👑'
+
+/**
+ * Cuanto espera un agente en la cafetera despues de terminar, antes de irse de
+ * la oficina. Si le llega trabajo nuevo dentro de esa ventana, vuelve al puesto.
+ */
+export const CAFETERIA_MS = userConfig.office?.cafeteriaMs ?? 45_000
+
+/** Duracion del fundido de salida al llegar a la puerta (ms). */
+export const LEAVE_FADE_MS = 600
 
 // The boss — always in the office
 export const BOSS_CHAR = bossSprite
