@@ -6,6 +6,7 @@
     "emoji": "crown"
   },
   "office": {
-    "cafeteriaMs": 45000
+    "cafeteriaMs": 45000,
+    "randomEvents": false
   }
 }

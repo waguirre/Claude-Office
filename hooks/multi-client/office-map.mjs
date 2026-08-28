@@ -68,7 +68,23 @@ const STATUS = {
   Grep: (i) => 'searching ' + short(i.pattern || i.query || '', 30),
   Glob: (i) => 'globbing ' + short(i.pattern || i.query || '', 30),
   Skill: (i) => 'loading skill ' + short(i.skill || i.name || '', 30),
+  TodoWrite: () => 'updating the task list',
+  WebFetch: (i) => 'fetching ' + short(host(i.url), 40),
+  WebSearch: (i) => 'searching the web for ' + short(i.query || '', 30),
+  NotebookEdit: (i) => 'editing notebook ' + short(i.notebook_path || '', 40),
+  AskUserQuestion: () => 'asking a question',
+  SlashCommand: (i) => 'running /' + short(i.command || '', 30),
+  ExitPlanMode: () => 'presenting a plan',
 };
+
+// Tools de sondeo: disparan muchas veces seguidas por una sola accion del
+// usuario y llenarian el chat sin decir nada.
+const SILENT = new Set(['BashOutput', 'KillShell', 'TodoRead', 'ListAgents', 'ListMcpResourcesTool']);
+
+/** Solo el host de una URL: la URL entera no cabe en la columna del chat. */
+function host(url) {
+  try { return new URL(String(url)).host; } catch { return String(url || ''); }
+}
 
 export function normalize(d, phase, client = '') {
   // Antigravity: el evento no viaja en el payload, llega por --phase.
@@ -271,9 +287,11 @@ export function toOfficeEvent(n) {
   }
 
   if (!isPre) return null;
-  const fn = STATUS[tool];
-  return fn
-    ? { type: 'agent_working', agentId: sessionAgentId(n), status: tag(n) + fn(n.input || {}),
-        client: n.client, session: n.session }
-    : null;
+  if (SILENT.has(tool)) return null;
+  // Sin caso por defecto, mas de la mitad de las tool calls no emitian nada y la
+  // oficina se veia vacia mientras la sesion trabajaba.
+  const fn = STATUS[tool] || (() => 'using ' + tool);
+  // Sin prefijo de scope: el nombre del agente ya dice proyecto/rama y cliente.
+  return { type: 'agent_working', agentId: sessionAgentId(n), status: fn(n.input || {}),
+           client: n.client, session: n.session };
 }

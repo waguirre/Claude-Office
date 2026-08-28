@@ -26,7 +26,7 @@ import {
   coffeeMessage,
   waterMessage,
 } from './agentManager'
-import { BOSS_ROLE, BOSS_NAME, CAFETERIA_MS, LEAVE_FADE_MS } from './config'
+import { BOSS_ROLE, BOSS_NAME, CAFETERIA_MS, LEAVE_FADE_MS, RANDOM_EVENTS_ENABLED } from './config'
 import { pickEvent } from './events'
 import { getInteraction } from './interactions'
 import {
@@ -1640,6 +1640,10 @@ const App: React.FC = () => {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    // Apagados salvo que se pidan en office.config.json: estos eventos hablan por
+    // las sesiones reales, y el chat tiene que ser un registro de trabajo.
+    if (!RANDOM_EVENTS_ENABLED) return
+
     // Percentage-based target positions for each event type (matching room layout)
     const EVENT_TARGETS: Record<string, { x: number; y: number }> = {
       'fire-drill': { x: 67.5, y: 48.9 },

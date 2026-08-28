@@ -8,7 +8,7 @@
 // Load user config (office.config.json) — bundled by Vite
 let userConfig: {
   boss?: { name?: string; sprite?: string; color?: string; emoji?: string }
-  office?: { cafeteriaMs?: number }
+  office?: { cafeteriaMs?: number; randomEvents?: boolean }
 } = {}
 try {
   // Vite handles JSON imports at build time
@@ -27,6 +27,13 @@ const bossEmoji  = userConfig.boss?.emoji  ?? '👑'
  * la oficina. Si le llega trabajo nuevo dentro de esa ventana, vuelve al puesto.
  */
 export const CAFETERIA_MS = userConfig.office?.cafeteriaMs ?? 45_000
+
+/**
+ * Eventos de oficina inventados (incendio, pizza, cumpleanos, deploy...). Apagados
+ * por defecto: ponen frases en boca de sesiones reales, asi que el chat dejaba de
+ * ser un registro de trabajo. Encenderlos solo para demos o grabaciones.
+ */
+export const RANDOM_EVENTS_ENABLED = userConfig.office?.randomEvents ?? false
 
 /** Duracion del fundido de salida al llegar a la puerta (ms). */
 export const LEAVE_FADE_MS = 600
