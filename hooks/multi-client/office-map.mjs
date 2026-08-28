@@ -1,7 +1,7 @@
 // Claude-Office :: mapeo y transporte compartido.
 // Lo usan tanto office-emit.mjs (hooks por stdin: Claude Code, Codex, Kimi,
 // Antigravity) como el plugin de OpenCode (in-process, sin spawn).
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 
@@ -82,6 +82,8 @@ export function normalize(d, phase, client = '') {
       cwd: (Array.isArray(d.workspacePaths) && d.workspacePaths[0]) || d.cwd || '',
       session: d.conversationId || '',
       client: client || 'antigravity',
+      model: d.model || '',
+      transcriptPath: '',
       get git() { return (this._g ??= gitInfo(this.cwd)); },
     };
   }
@@ -98,6 +100,10 @@ export function normalize(d, phase, client = '') {
     cwd: d.cwd || '',
     session: d.session_id || '',
     client: client || 'claude',
+    // Claude Code NO manda el modelo en el payload, pero si el transcript, y ahi
+    // esta. El resto de clientes puede mandarlo directo en 'model'.
+    model: d.model || '',
+    transcriptPath: d.transcript_path || '',
     get git() { return (this._g ??= gitInfo(this.cwd)); },
   };
 }
@@ -151,13 +157,62 @@ export function gitInfo(cwd) {
   return {};
 }
 
-// Etiqueta corta: proyecto/rama si hay repo, si no el cliente a secas.
+// Etiqueta corta: proyecto/rama si hay repo; si no, la carpeta. Caer al nombre
+// del cliente daba etiquetas duplicadas ("claude - claude") en cualquier
+// directorio que no fuera un repo.
 export const scopeLabel = (n) => {
   const g = n.git || {};
   if (g.project && g.branch) return g.project + '/' + g.branch;
   if (g.project) return g.project;
+  if (n.cwd) return basename(resolve(n.cwd));
   return n.client || 'agent';
 };
+
+// Claude Code corre en varias superficies y todas mandan client=claude. La
+// distincion viene por env: el hook es hijo del proceso y la hereda.
+export function clientLabel(client, entrypoint) {
+  if (client !== 'claude') return client || 'agent';
+  const e = entrypoint || '';
+  if (e === 'claude-vscode') return 'claude vscode';
+  if (e.startsWith('remote')) return 'claude remote';
+  return 'claude cli';
+}
+
+// 'claude-opus-5' -> 'opus-5' | 'claude-haiku-4-5-20251001' -> 'haiku-4-5'
+export function shortModel(id) {
+  if (!id) return '';
+  return String(id)
+    .replace(/\[.*?\]/g, '')          // sufijos tipo [1m]
+    .replace(/^claude-/, '')
+    .replace(/-\d{8}$/, '')
+    .trim();
+}
+
+// El modelo sale de la cola del transcript: leer el archivo entero seria caro y
+// crece toda la sesion. 64 KB alcanzan de sobra para el ultimo mensaje.
+export function modelFromTranscript(path, tailBytes = 64 * 1024) {
+  if (!path) return '';
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const len = Math.min(size, tailBytes);
+    const buf = Buffer.allocUnsafe(len);
+    readSync(fd, buf, 0, len, size - len);
+    const lines = buf.toString('utf8').split(String.fromCharCode(10));
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const d = JSON.parse(lines[i]);       // la primera linea suele venir cortada
+        if (d && d.message && d.message.model) return d.message.model;
+      } catch {}
+    }
+  } catch {}
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch {} } }
+  return '';
+}
+
+/** Modelo del agente: el que mande el cliente, o el del transcript. */
+export const modelOf = (n) => shortModel(n.model || modelFromTranscript(n.transcriptPath));
 
 // Un agente por (cliente, sesion). Sin esto, el server recibe agent_working sin
 // agentId y TODAS las ventanas colapsan en un unico estado global: solo se ve la
@@ -165,14 +220,24 @@ export const scopeLabel = (n) => {
 export const sessionAgentId = (n) =>
   'session-' + (n.client || 'x') + '-' + (String(n.session || 'anon').slice(0, 8) || 'anon');
 
-export const sessionAgent = (n) => ({
-  id: sessionAgentId(n),
-  name: scopeLabel(n) + ' · ' + (n.client || 'agent'),
-  role: 'general-purpose',
-  client: n.client,
-  session: n.session,
-  task: (n.git && n.git.branch ? 'rama ' + n.git.branch : 'sesion activa'),
-});
+export const sessionAgent = (n) => {
+  const model = modelOf(n);
+  const branch = n.git && n.git.branch;
+  const worktree = n.git && n.git.worktree;
+  // El nombre tiene que caber en la columna del chat (~300 px): proyecto/rama y
+  // cliente. El modelo va en task, que se ve al pasar el mouse y en el tablero.
+  return {
+    id: sessionAgentId(n),
+    name: scopeLabel(n) + ' · ' + clientLabel(n.client, process.env.CLAUDE_CODE_ENTRYPOINT),
+    role: 'general-purpose',
+    client: n.client,
+    session: n.session,
+    task: [
+      model,
+      worktree ? 'worktree ' + worktree : (branch ? 'rama ' + branch : ''),
+    ].filter(Boolean).join(' · ') || 'sesion activa',
+  };
+};
 
 const tag = (n) => '[' + (n.client || '?') + '@' + scopeLabel(n) + '] ';
 

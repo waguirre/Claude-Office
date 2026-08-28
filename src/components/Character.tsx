@@ -137,6 +137,8 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
   return (
     <div
       className={`character-wrapper state-${animState}${agent.fading ? ' leaving-fade' : ''}`}
+      /* Quien es y con que modelo corre: el nombre solo no cabe en el chat. */
+      title={agent.task ? `${agent.name} — ${agent.task}` : agent.name}
       style={{
         left: `${agent.position.x}%`,
         top: `${agent.position.y}%`,
