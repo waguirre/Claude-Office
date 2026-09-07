@@ -58,7 +58,21 @@ const TOOL_ALIASES = {
   task: 'Task', agent: 'Agent', invoke_skill: 'Skill', activate_skill: 'Skill', skill: 'Skill',
 };
 
-const short = (v, n = 60) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+// String(objeto) daba "[object Object]" y asi salia al chat en cada
+// agent_completed cuyo response no era texto. Se toma el campo de texto
+// habitual, y si no hay, JSON antes que la coercion por defecto.
+const texto = (v) => {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    for (const k of ['text', 'content', 'message', 'result', 'summary']) {
+      if (typeof v[k] === 'string' && v[k]) return v[k];
+    }
+    try { return JSON.stringify(v); } catch { return ''; }
+  }
+  return String(v);
+};
+const short = (v, n = 60) => texto(v).replace(/\s+/g, ' ').trim().slice(0, n);
 
 const STATUS = {
   Read: (i) => 'reading ' + short(i.file_path || i.path || i.target_file || '', 40),

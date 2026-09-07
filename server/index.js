@@ -103,6 +103,16 @@ function discoverMcpServers() {
 /** @type {Map<string, object>} agentId -> agent object */
 const activeAgents = new Map()
 
+// Ultimo agent_working que cada agente mando al chat, para no repetir ni inundar.
+// Se poda junto con activeAgents en agent_completed y en la baja por idle.
+const lastWorkingChat = new Map()
+// 8s descartaba transiciones legitimas (una skill y despues un test corren
+// seguidos). 3s agrupa la rafaga de tool calls de una misma accion sin perder
+// el cambio real. Ajustable por entorno.
+// ponytail: es un umbral fijo, no una tasa adaptativa. Si un agente muy rapido
+// igual satura, subirlo por OFFICE_WORKING_CHAT_MIN_MS antes de complicarlo.
+const WORKING_CHAT_MIN_MS = Number(process.env.OFFICE_WORKING_CHAT_MIN_MS ?? 3000)
+
 /**
  * Generate a stable agent ID from the event payload.
  * Uses the provided id, or derives one from name+role.
@@ -474,6 +484,24 @@ function processEvent(body) {
         agent.state = 'working'
         agent.status = body.status ?? ''
         activeAgents.set(id, agent)
+
+        // El estado ya se veia en el roster, pero el chat solo anunciaba el
+        // "starting:" del spawn: la oficina contaba QUE agente arranco y nunca
+        // QUE estaba haciendo. Ahora tambien va al chat -- que skill carga, que
+        // subagente lanza, que archivo toca.
+        //
+        // agent_working dispara en CADA tool call, asi que sin freno el chat
+        // queda ilegible. Dos filtros: no repetir el mismo texto seguido, y un
+        // minimo de tiempo entre mensajes del MISMO agente. Otros agentes
+        // siguen pudiendo escribir en el intervalo.
+        const texto = (agent.status ?? '').trim()
+        const previo = lastWorkingChat.get(id)
+        const ahora = Date.now()
+        if (texto && (!previo || (previo.text !== texto && ahora - previo.at >= WORKING_CHAT_MIN_MS))) {
+          lastWorkingChat.set(id, { text: texto, at: ahora })
+          const chatMsg = addMessage({ sender: agent.name, role: agent.role, text: texto.slice(0, 120) })
+          broadcast({ type: 'chat_message', ...chatMsg })
+        }
       }
       return { type: 'agent_working', agentId: id, status: body.status, timestamp: Date.now() }
     }
@@ -485,7 +513,7 @@ function processEvent(body) {
         agent.state = 'completed'
         activeAgents.set(id, agent)
         // Remove after a short grace period so frontends can animate exit
-        setTimeout(() => activeAgents.delete(id), 10_000)
+        setTimeout(() => { activeAgents.delete(id); lastWorkingChat.delete(id) }, 10_000)
 
         // Proactive message — announce completion in chat
         const resultShort = (body.result ?? 'done').slice(0, 50)
@@ -522,6 +550,7 @@ function processEvent(body) {
       for (const [id, agent] of activeAgents.entries()) {
         if (agent.server === body.server && agent.state === 'working') {
           activeAgents.delete(id)
+          lastWorkingChat.delete(id)
         }
       }
       return { type: 'mcp_done', server: body.server, timestamp: Date.now() }
