@@ -1,0 +1,12 @@
+{
+  "boss": {
+    "name": "Wilinton",
+    "sprite": "Me-1",
+    "color": "#ff4444",
+    "emoji": "👑"
+  },
+  "office": {
+    "cafeteriaMs": 45000,
+    "randomEvents": false
+  }
+}

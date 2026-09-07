@@ -106,6 +106,29 @@ const activeAgents = new Map()
 // Ultimo agent_working que cada agente mando al chat, para no repetir ni inundar.
 // Se poda junto con activeAgents en agent_completed y en la baja por idle.
 const lastWorkingChat = new Map()
+
+// Un evento para un agente que no esta en memoria se descartaba en silencio.
+// Pasa siempre que el server reinicia con trabajo en curso: el chat persiste en
+// disco pero activeAgents no, y los agent_working/agent_completed posteriores
+// caian en el `if` sin dejar rastro. Se readopta con lo que trae el evento --
+// mejor un registro parcial que perder el avance.
+function adoptarAgente(id, body) {
+  if (!id) return null
+  if (activeAgents.has(id)) return activeAgents.get(id)
+  const record = {
+    id,
+    name: body.name ?? body.agentName ?? id.replace(/^(session|agent)-/, ''),
+    role: body.role ?? 'general-purpose',
+    task: '',
+    state: 'working',
+    spawnedAt: Date.now(),
+    readopted: true,
+  }
+  activeAgents.set(id, record)
+  console.log(`[~] Agent readoptado tras reinicio: ${id}`)
+  return record
+}
+
 // 8s descartaba transiciones legitimas (una skill y despues un test corren
 // seguidos). 3s agrupa la rafaga de tool calls de una misma accion sin perder
 // el cambio real. Ajustable por entorno.
@@ -479,8 +502,9 @@ function processEvent(body) {
 
     case 'agent_working': {
       const id = body.agentId
-      if (id && activeAgents.has(id)) {
-        const agent = activeAgents.get(id)
+      const adoptado = adoptarAgente(id, body)
+      if (adoptado) {
+        const agent = adoptado
         agent.state = 'working'
         agent.status = body.status ?? ''
         activeAgents.set(id, agent)
@@ -508,8 +532,9 @@ function processEvent(body) {
 
     case 'agent_completed': {
       const id = body.agentId
-      if (id && activeAgents.has(id)) {
-        const agent = activeAgents.get(id)
+      const adoptadoFin = adoptarAgente(id, body)
+      if (adoptadoFin) {
+        const agent = adoptadoFin
         agent.state = 'completed'
         activeAgents.set(id, agent)
         // Remove after a short grace period so frontends can animate exit
